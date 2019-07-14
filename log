@@ -1,0 +1,21 @@
+   Compiling flowrider-bmp v0.1.0 (/Users/cdaniel/Code/rust/bmp-client)
+warning: unused import: `lazy_static::lazy_static`
+ --> src/handler.rs:6:5
+  |
+6 | use lazy_static::lazy_static;
+  |     ^^^^^^^^^^^^^^^^^^^^^^^^
+  |
+  = note: #[warn(unused_imports)] on by default
+
+warning: unused import: `prometheus::IntCounterVec`
+ --> src/handler.rs:7:5
+  |
+7 | use prometheus::IntCounterVec;
+  |     ^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `std::thread`
+  --> src/lib.rs:15:5
+   |
+15 | use std::thread;
+   |     ^^^^^^^^^^^
+

@@ -1,0 +1,6 @@
+/target
+**/*.rs.bk
+
+bmp_play.py
+config.yml
+data/
