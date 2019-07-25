@@ -2,7 +2,7 @@
 pub mod decoder;
 pub mod enums;
 
-pub use self::decoder::Decoder;
+pub use self::decoder::*;
 
 use enums::*;
 
@@ -10,7 +10,7 @@ use enums::*;
 pub struct BmpMessage {
     pub version: u8,
     pub kind: MessageKind,
-    pub peer_header: decoder::PeerHeader,
+    // pub peer_header: decoder::PeerHeader,
 
     pub message: MessageData,
 }
@@ -20,6 +20,6 @@ pub enum MessageData {
     Unimplemented,
 
     Initiation(Vec<decoder::InformationTlv>),
-    PeerUp(decoder::PeerUp),
-    RouteMonitoring(bgp_rs::Update)
+    PeerUp((PeerHeader, PeerUp)),
+    RouteMonitoring((PeerHeader, bgp_rs::Update))
 }

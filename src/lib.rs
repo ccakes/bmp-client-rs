@@ -12,7 +12,7 @@ use std::error::Error;
 use std::{fs, io};
 use std::io::Write;
 use std::path::PathBuf;
-use std::thread;
+// use std::thread;
 
 /// flowrider-blackhole
 #[derive(StructOpt)]

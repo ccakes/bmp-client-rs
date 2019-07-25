@@ -6,14 +6,37 @@ use super::{BmpMessage, MessageData};
 
 use bgp_rs::Capabilities;
 use byteorder::{BigEndian, ReadBytesExt};
+use failure::{Error, format_err};
 use hashbrown::HashMap;
 
-use std::io::{Cursor, Error, ErrorKind, Read, Result};
+use std::io::{Cursor, Read};
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
+
+// Stupid workaround to skip first malformed UPDATE message
+use std::sync::atomic::{AtomicUsize, Ordering};
+static SKIPPED: AtomicUsize = AtomicUsize::new(1);
+static SKIP_MAX: usize = 2;
 
 #[derive(Clone, Debug)]
 pub struct Decoder {
-    client_capabilities: HashMap<Ipv4Addr, Capabilities>,
+    client_capabilities: HashMap<IpAddr, Capabilities>,
+}
+
+// Debug tool
+impl Drop for Decoder {
+    fn drop(&mut self) {
+        // Convenience - free sorting
+        use std::collections::BTreeSet;
+
+        if std::thread::panicking() {
+            log::error!("Decoder state");
+
+            let keys: BTreeSet<IpAddr> = self.client_capabilities.keys().copied().collect();
+            for k in &keys {
+                println!("{} => {:#?}", k, self.client_capabilities.get(k).unwrap());
+            }
+        }
+    }
 }
 
 impl Decoder {
@@ -21,14 +44,15 @@ impl Decoder {
         Self { client_capabilities: HashMap::new() }
     }
 
-    pub fn decode(&mut self, input: &mut dyn Read) -> Result<BmpMessage> {
+    pub fn decode(&mut self, input: &mut dyn Read) -> Result<BmpMessage, Error> {
         // Read BMP header
         let version = input.read_u8()?;
         let length = input.read_u32::<BigEndian>()?;
         let kind: MessageKind = input.read_u8()?.into();
 
         // The length we just read is the entire message, so calculate how much we have to go
-        // and read it
+        // and read it. Pulling the lot off the wire here is nice because then if the decoding
+        // fails for whatever reason, we can keep going and *should* be at the right spot.
         let remaining = (length as usize) - 6;
 
         let mut buf = vec![0u8; remaining as usize];
@@ -38,8 +62,6 @@ impl Decoder {
         // prevent over/under reading if we error somewhere.
         let mut cur = Cursor::new(buf);
 
-        let peer_header = PeerHeader::decode(&mut cur)?;
-        
         // Now decode based on the MessageKind
         let juice = match kind {
             MessageKind::Initiation => {
@@ -47,12 +69,11 @@ impl Decoder {
 
                 let mut tlv = vec![];
                 while cur.position() < buf_len {
-                    // Hack because bmp_dump broke the file
                     let kind = cur.read_u16::<BigEndian>()?;
                     cur.set_position( cur.position() - 2 );
 
                     let info = match kind {
-                        x if x < 2 => InformationTlv::decode(&mut cur)?,
+                        x if x <= 2 => InformationTlv::decode(&mut cur)?,
                         _ => { break; }
                     };
 
@@ -62,34 +83,44 @@ impl Decoder {
                 MessageData::Initiation(tlv)
             },
             MessageKind::PeerUp => {
+                let peer_header = PeerHeader::decode(&mut cur)?;
                 let message = PeerUp::decode(&peer_header.peer_flags, &mut cur)?;
 
                 // Record the speaker capabilities, we'll use these later
-                self.client_capabilities.entry(peer_header.peer_bgp_id)
-                    .or_insert_with(|| Capabilities::parse(&message.recv_open).expect("missing capabilities"));
+                self.client_capabilities.entry(peer_header.peer_addr)
+                    .or_insert_with(|| {
+                        match (&message.sent_open, &message.recv_open) {
+                            (Some(s), Some(r)) => Capabilities::common(s, r).expect("missing capabilities"),
+                            _ => { log::warn!("Missing BGP OPENs"); Capabilities::default() }
+                        }
+                    });
+                    // .or_insert_with(|| Capabilities::common(&message.sent_open, &message.recv_open).expect("missing capabilities"));
 
-                MessageData::PeerUp(message)
+                MessageData::PeerUp((peer_header, message))
+            },
+            MessageKind::PeerDown => {
+                // Make sure to clean up self.capabilities
+                MessageData::Unimplemented
             },
             MessageKind::RouteMonitoring => {
-                let capabilities = self.client_capabilities.get(&peer_header.peer_bgp_id)
-                    .ok_or_else(|| Error::new(
-                        ErrorKind::Other,
-                        format!("No capabilities found for neighbor {}", peer_header.peer_bgp_id)
-                    ))?;
+                let peer_header = PeerHeader::decode(&mut cur)?;
+                let capabilities = self.client_capabilities.get(&peer_header.peer_addr)
+                    .ok_or_else(|| format_err!("No capabilities found for neighbor {}", peer_header.peer_addr))?;
 
                 let header = bgp_rs::Header::parse(&mut cur)?;
-                // let update = bgp_rs::Update::parse(&header, &mut cur, &bgp_rs::Capabilities::default())?;
+                // let update = bgp_rs::Update::parse(&header, &mut cur, &capabilities)?;
                 // DEBUG
                 let update = bgp_rs::Update::parse(&header, &mut cur, &capabilities)
                     .map_err(|e| {
-                        log::warn!("Error decoding UPDATE");
-                        e
+                        if SKIPPED.load(Ordering::SeqCst) < SKIP_MAX { SKIPPED.fetch_add(1, Ordering::SeqCst); return e; }
+                        log::error!("Panicking after {} errors", SKIPPED.load(Ordering::SeqCst));
+                        log::error!("message.kind: {}", kind);
+                        panic!()
                     })?;
 
-                MessageData::RouteMonitoring(update)
+                MessageData::RouteMonitoring((peer_header, update))
                 // MessageData::Unimplemented
-            }
-
+            },
             _ => MessageData::Unimplemented
         };
 
@@ -97,7 +128,7 @@ impl Decoder {
             version: version,
             kind: kind,
 
-            peer_header,
+            // peer_header,
             message: juice
         })
     }
@@ -108,7 +139,8 @@ impl Decoder {
 /// The per-peer header follows the common header for most BMP messages.
 /// The rest of the data in a BMP message is dependent on the MessageKind
 /// field in the common header.
-#[derive(Copy, Clone, Debug)]
+// #[derive(Copy, Clone, Debug)]
+#[derive(Clone, Debug)]
 pub struct PeerHeader {
     pub peer_type: PeerType,
     pub peer_flags: PeerFlags,
@@ -120,8 +152,18 @@ pub struct PeerHeader {
     pub timestamp_ms: u32,
 }
 
+// Assist with debugging
+// #[cfg(debug_assertions)]
+impl Drop for PeerHeader {
+    fn drop(&mut self) {
+        if std::thread::panicking() {
+            log::error!("Panicked processing this message: {:#?}", self);
+        }
+    }
+}
+
 impl PeerHeader {
-    pub fn decode(cur: &mut Cursor<Vec<u8>>) -> Result<Self> {
+    pub fn decode(cur: &mut Cursor<Vec<u8>>) -> Result<Self, Error> {
         let peer_type: PeerType = cur.read_u8()?.into();
         let peer_flags: PeerFlags = cur.read_u8()?.into();
         let peer_distinguisher = (cur.read_u32::<BigEndian>()?, cur.read_u32::<BigEndian>()?);
@@ -178,7 +220,7 @@ pub struct InformationTlv {
 }
 
 impl InformationTlv {
-    pub fn decode(cur: &mut Cursor<Vec<u8>>) -> Result<Self> {
+    pub fn decode(cur: &mut Cursor<Vec<u8>>) -> Result<Self, Error> {
         let information_type = InformationType::from( cur.read_u16::<BigEndian>()? );
         let len = cur.read_u16::<BigEndian>()?;
 
@@ -201,15 +243,13 @@ pub struct PeerUp {
     pub remote_port: u16,
     // pub sent_open: BgpOpen,
     // pub recv_open: BgpOpen,
-    pub sent_open: bgp_rs::Open,
-    pub recv_open: bgp_rs::Open,
+    pub sent_open: Option<bgp_rs::Open>,
+    pub recv_open: Option<bgp_rs::Open>,
     pub information: Vec<InformationTlv>,
 }
 
 impl PeerUp {
-    pub fn decode(peer_flags: &PeerFlags, cur: &mut Cursor<Vec<u8>>) -> Result<Self> {
-        // let mut cur = Cursor::new(buf);
-
+    pub fn decode(peer_flags: &PeerFlags, cur: &mut Cursor<Vec<u8>>) -> Result<Self, Error> {
         let local_addr = match peer_flags.V {
             // IPv4
             false => {
@@ -226,20 +266,26 @@ impl PeerUp {
         let local_port = cur.read_u16::<BigEndian>()?;
         let remote_port = cur.read_u16::<BigEndian>()?;
 
-        // Read the message header dumping the marker
-        // TODO should make this more robust and check it confirms to the RFC
-        // let sent_open = BgpOpen::decode(cur)?;
-
-        // And now read the recv OPEN
-        // let recv_open = BgpOpen::decode(cur)?;
+        // For at least some routers (ie adm-b1) the PeerUp messages are missing the
+        // OPENs. Short-circuit here until I can figure out whats going on
+        if cur.position() == cur.get_ref().len() as u64 {
+            return Ok(PeerUp {
+                local_addr,
+                local_port,
+                remote_port,
+                sent_open: None,
+                recv_open: None,
+                information: vec![]
+            });
+        }
 
         let sent_hdr = bgp_rs::Header::parse(cur)?;
         assert!(sent_hdr.record_type == 1);
-        let sent_open = bgp_rs::Open::parse(cur)?;
+        let sent_open = Some(bgp_rs::Open::parse(cur)?);
 
         let recv_hdr = bgp_rs::Header::parse(cur)?;
         assert!(recv_hdr.record_type == 1);
-        let recv_open = bgp_rs::Open::parse(cur)?;
+        let recv_open = Some(bgp_rs::Open::parse(cur)?);
 
         // Get the inner buffer length, then pull out TLVs until it's consumed
         let buf_len = cur.get_ref().len() as u64;

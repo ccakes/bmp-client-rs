@@ -1,7 +1,8 @@
 use crate::protocol::BmpMessage;
 use crate::protocol::Decoder;
 
-use std::io::Result;
+use failure::Error;
+
 use std::net::TcpStream;
 
 #[derive(Debug)]
@@ -17,7 +18,17 @@ impl BmpClient {
         Self { decoder, stream }
     }
 
-    pub fn recv(&mut self) -> Result<BmpMessage> {
+    pub fn recv(&mut self) -> Result<BmpMessage, Error> {
+        // THis is a horrible hack and I hate it
+        let mut buf = vec![0u8, 1];
+        match self.stream.peek(&mut buf) {
+            Ok(0) => {
+                log::info!("Peer closed the connection");
+                std::process::exit(0);
+            },
+            _ => {}
+        };
+        
         self.decoder.decode(&mut self.stream)
     }
 }
