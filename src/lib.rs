@@ -7,6 +7,9 @@
 
 mod client;
 mod error;
+pub mod types {
+    pub use bmp_protocol::types::*;
+}
 
 pub use self::client::BmpClient;
 pub use self::error::*;

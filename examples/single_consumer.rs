@@ -1,31 +1,32 @@
-use std::net::TcpListener;
+use tokio::net::TcpListener;
 
-use bmp_client::{BmpClient, ErrorKind};
+use bmp_client::BmpClient;
 
-fn main() {
+#[tokio::main]
+async fn main() {
     // Take the first incoming connection on tcp/1790
-    let tcp = TcpListener::bind("0.0.0.0:11019").unwrap();
-    let stream = tcp.incoming().next().unwrap().unwrap();
+    let mut tcp = TcpListener::bind("0.0.0.0:11019").await.unwrap();
+    println!("Listening on 0.0.0.0:11019");
 
-    println!("{} connected!", stream.peer_addr().unwrap());
-
-    // Create a new client from the TcpStream
-    let mut client = BmpClient::new(stream);
-
-    let mut num = 1usize;
     loop {
-        match client.recv() {
-            Ok(message) => println!("[{}] Got {} message", num, message.kind),
-            Err(ref e) if e.kind == ErrorKind::PeerDisconnected => {
-                eprintln!("Peer disconnected");
-                std::process::exit(0);
-            },
-            Err(e) => {
-                eprintln!("[{}] Error decoding BMP message: {:?}", num, e);
-                std::process::exit(1);
-            }
-        };
+        let (stream, peer) = tcp.accept().await.unwrap();
+        println!("Client {} connected", peer);
 
-        num += 1;
+        tokio::spawn(async move {
+            // Create a new client from the TcpStream
+            let mut client = BmpClient::new(stream);
+
+            let mut num = 0usize;
+            while let Some(message) = client.recv().await {
+                num += 1;
+                match message {
+                    Ok(message) => println!("[{}] Got {} message", num, message.kind),
+                    Err(error) => {
+                        eprintln!("{}", error);
+                        std::process::exit(1);
+                    }
+                };
+            }
+        });
     }
 }

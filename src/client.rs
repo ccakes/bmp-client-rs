@@ -1,10 +1,16 @@
 use crate::error::*;
 
-use bmp_protocol::{BmpMessage, Decoder};
+use bmp_protocol::{
+    types::BmpMessage,
+    BmpDecoder
+};
 // use failure::{Error, format_err};
 
-use std::error::Error as StdError;
-use std::net::TcpStream;
+use tokio::{
+    net::TcpStream,
+    stream::StreamExt,
+};
+use tokio_util::codec::FramedRead;
 
 /// ## BmpClient
 ///
@@ -16,31 +22,22 @@ use std::net::TcpStream;
 /// ```
 #[derive(Debug)]
 pub struct BmpClient {
-    decoder: Decoder,
-    stream: TcpStream,
+    inner: FramedRead<TcpStream, BmpDecoder>
 }
 
 impl BmpClient {
     /// Instantiate a new client
     pub fn new(stream: TcpStream) -> Self {
-        let decoder = Decoder::new();
+        let inner = FramedRead::new(stream, BmpDecoder::new());
 
-        Self { decoder, stream }
+        Self { inner }
     }
 
     /// Block on the TcpStream and wait for the next BMP message
     ///
     /// Returns an error if the client disconnects or if there is an error decoding the message
-    pub fn recv(&mut self) -> Result<BmpMessage, Error> {
-        let mut buf = vec![0u8, 1];
-        match self.stream.peek(&mut buf) {
-            Ok(0) => {
-                return Err(Error::disconnected());
-                // return Err(format_err!("Client disconnected"));
-            },
-            _ => {}
-        };
-        
-        self.decoder.decode(&mut self.stream).map_err(|e| (Box::new(e) as Box<dyn StdError>).into())
+    pub async fn recv(&mut self) -> Option<Result<BmpMessage, Error>> {
+        self.inner.next().await
+            .map(|thing| thing.map_err(|e| e.into()))
     }
 }

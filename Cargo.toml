@@ -5,12 +5,14 @@ authors = ["Cameron Daniel <cam.daniel@gmail.com>"]
 edition = "2018"
 
 [dependencies]
-bmp-protocol = { path = "../bmp-protocol" }
-chrono = "0.4"
-failure = "0.1"
+# bmp-protocol = { path = "../bmp-protocol" }
+bmp-protocol = { git = "https://github.com/ccakes/bmp-protocol-rs" }
 hashbrown = "^0.7"
-lazy_static = "1.3"
 prometheus = { version = "0.7", features = ["nightly"] }
 # prometheus_exporter = "0.3"
-rand = "0.6"
+tokio = { version = "^0.2", features = ["tcp"] }
+tokio-util = { version = "^0.3", features = ["codec"] }
 tracing = "^0.1"
+
+[dev-dependencies]
+tokio = { version = "^0.2", features = ["net", "rt-core", "macros"] }

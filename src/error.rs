@@ -1,36 +1,39 @@
-use std::error::Error as StdError;
-
-#[derive(Debug, Eq, PartialEq)]
-pub enum ErrorKind {
-    PeerDisconnected,
-    Io,
-    Other,
-}
-
 #[derive(Debug)]
-pub struct Error {
-    pub kind: ErrorKind,
-    pub description: String,
-    pub cause: Option<Box<dyn StdError>>,
+pub enum Error {
+    Io(std::io::Error),
+    Other(String),
+    Unknown(Box<dyn std::error::Error>),
 }
 
-impl Error {
-    pub(crate) fn disconnected() -> Self {
-        Self {
-            kind: ErrorKind::PeerDisconnected,
-            description: String::from("Peer disconnected"),
-            cause: None
+unsafe impl Send for Error {}
+unsafe impl Sync for Error {}
+
+impl std::fmt::Display for Error {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        match self {
+            Self::Io(error) => write!(f, "I/O error: {}", error),
+            Self::Other(error) => write!(f, "Error: {}", error),
+
+            Self::Unknown(error) => write!(f, "Unknown error: {}", error),
         }
     }
 }
 
-impl From<Box<dyn StdError>> for Error {
-    fn from(err: Box<dyn StdError>) -> Self {
-        Self {
-            kind: ErrorKind::Other,
-            description: err.to_string(),
-            cause: Some(err)
-        }
+impl std::error::Error for Error {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        None
+    }
+}
+
+impl From<std::io::Error> for Error {
+    fn from(error: std::io::Error) -> Self {
+        Self::Io(error)
+    }
+}
+
+impl From<Box<dyn std::error::Error + Sync + Send>> for Error {
+    fn from(error: Box<dyn std::error::Error + Sync + Send>) -> Self {
+        Self::Unknown(error)
     }
 }
 
