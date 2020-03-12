@@ -1,26 +1,31 @@
-use tokio::net::TcpListener;
+# bmp-client
 
-use bmp_client::BmpClient;
+This is a simple BMP (BGP Monitoring Protocol) client for Rust. The heavy lifting is done within the bmp-protocol crate, this just provides a simple wrapper with some convenience functions.
 
+### Usage
+
+```toml
+# Cargo.toml
+
+[dependencies]
+bmp-client = { git = "https://github.com/ccakes/bmp-client-rs" }
+```
+
+```rust
 #[tokio::main]
 async fn main() {
-    // Take the first incoming connection on tcp/1790
     let mut tcp = TcpListener::bind("0.0.0.0:1790").await.unwrap();
-    println!("Listening on 0.0.0.0:11019");
 
     loop {
         let (stream, peer) = tcp.accept().await.unwrap();
         println!("Client {} connected", peer);
 
         tokio::spawn(async move {
-            // Create a new client from the TcpStream
             let mut client = BmpClient::new(stream);
 
-            let mut num = 0usize;
             while let Some(message) = client.recv().await {
-                num += 1;
                 match message {
-                    Ok(message) => println!("[{}] Got {} message", num, message.kind),
+                    Ok(message) => println!("Received a {} message", message.kind),
                     Err(error) => {
                         eprintln!("{}", error);
                         std::process::exit(1);
@@ -30,3 +35,8 @@ async fn main() {
         });
     }
 }
+```
+
+## Contributing
+
+Contributions are welcome, the library is still very barebones.
