@@ -40,7 +40,7 @@ impl BmpClient {
         }
     }
 
-    /// Block on the TcpStream and wait for the next BMP message
+    /// Returns a Future that will resolve to the next message
     ///
     /// Returns an error if the client disconnects or if there is an error decoding the message
     pub async fn recv(&mut self) -> Option<Result<BmpMessage, Error>> {

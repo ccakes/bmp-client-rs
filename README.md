@@ -8,7 +8,7 @@ This is a simple BMP (BGP Monitoring Protocol) client for Rust. The heavy liftin
 # Cargo.toml
 
 [dependencies]
-bmp-client = { git = "https://github.com/ccakes/bmp-client-rs" }
+bmp-client = "^0.1"
 ```
 
 ```rust

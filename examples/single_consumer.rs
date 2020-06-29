@@ -6,7 +6,7 @@ use bmp_client::BmpClient;
 async fn main() {
     // Take the first incoming connection on tcp/1790
     let mut tcp = TcpListener::bind("0.0.0.0:1790").await.unwrap();
-    println!("Listening on 0.0.0.0:11019");
+    println!("Listening on 0.0.0.0:1790");
 
     loop {
         let (stream, peer) = tcp.accept().await.unwrap();
